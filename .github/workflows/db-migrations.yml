@@ -1,0 +1,88 @@
+name: Database Migrations
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'intellexa-core/migrations/**'
+      - 'intellexa-core/alembic.ini'
+  workflow_dispatch:  # Allow manual triggers
+
+env:
+  PYTHON_VERSION: '3.10'
+  ALEMBIC_COMMAND: 'alembic upgrade head'
+
+jobs:
+  migrations:
+    name: Run Database Migrations
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        environment: ['staging', 'production']
+      fail-fast: false
+
+    permissions:
+      contents: read
+      id-token: write  # For AWS authentication if using IAM
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        working-directory: ./intellexa-core
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install alembic psycopg2-binary
+
+      - name: Configure AWS Credentials (Production Only)
+        if: matrix.environment == 'production'
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_PROD_IAM_ROLE }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run Migrations
+        working-directory: ./intellexa-core
+        env:
+          DB_URL: ${{ secrets[format('{0}_DB_URL', matrix.environment)] }}
+          DB_SSL: require
+        run: |
+          echo "Running migrations for ${{ matrix.environment }} environment"
+          alembic upgrade head
+          echo "Migrations completed successfully"
+
+      - name: Notify Migration Success
+        if: success()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '✅ Database migrations applied successfully to ${{ matrix.environment }} environment'
+            })
+
+      - name: Notify Migration Failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '❌ Database migration failed for ${{ matrix.environment }} environment!'
+            })
+            core.setFailed('Migration failed')

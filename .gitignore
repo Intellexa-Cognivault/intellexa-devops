@@ -1,0 +1,25 @@
+# Node dependencies
+/api/node_modules/
+
+# Data directories (runtime data, db files, etc.)
+/data/
+
+# Terraform state files
+*.tfstate
+*.tfstate.backup
+*.tfvars
+.terraform/
+
+# Docker related ignores
+docker/postgres/data/
+docker/api/node_modules/
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+.DS_Store
+
+# Ignore build output folders
+dist/
+build/

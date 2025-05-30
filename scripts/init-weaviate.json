@@ -1,0 +1,20 @@
+{
+  "classes": [{
+    "class": "Document",
+    "vectorizer": "none",
+    "properties": [
+      {
+        "name": "content",
+        "dataType": ["text"]
+      },
+      {
+        "name": "docId",
+        "dataType": ["string"]
+      },
+      {
+        "name": "userId",
+        "dataType": ["string"]
+      }
+    ]
+  }]
+}

@@ -4,9 +4,10 @@ set -euo pipefail
 # Configuration
 PROJECT_NAME="intellexa"
 POSTGRES_VERSION="15-alpine"
+POSTGRES_IMAGE="ankane/pgvector:latest"
 REDIS_VERSION="7-alpine"
-TIMESCALE_VERSION="pg15-2.11"
-WEAVIATE_VERSION="1.22"
+TIMESCALE_VERSION="2.11.0-pg15"
+WEAVIATE_VERSION="latest"
 MINIO_VERSION="RELEASE.2023-08-23T10-07-06Z"
 
 # Create Docker network
@@ -21,7 +22,8 @@ version: '3.8'
 
 services:
   postgres:
-    image: postgres:${POSTGRES_VERSION}
+    build:
+      context: ./docker/postgres
     container_name: ${PROJECT_NAME}-postgres
     environment:
       POSTGRES_USER: intellexa
@@ -187,11 +189,9 @@ docker compose up -d
 echo "Waiting for databases to initialize (30 seconds)..."
 sleep 30
 
-# Initialize MinIO buckets
-docker run --rm --network ${PROJECT_NAME}-network \
-  -e MC_HOST_minio=http://intellexa:intellexa123@minio:9000 \
-  minio/mc:latest \
-  mb minio/intellexa-docs --ignore-existing
+# Initialize MinIO buckets inside the MinIO container to avoid DNS issues
+docker exec -it ${PROJECT_NAME}-minio mc alias set local http://localhost:9000 intellexa intellexa123
+docker exec -it ${PROJECT_NAME}-minio mc mb local/intellexa-docs --ignore-existing
 
 # Print connection details
 echo -e "\n\033[1;32m=== Intellexa Local Development Setup ===\033[0m"

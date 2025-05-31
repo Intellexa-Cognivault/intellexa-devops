@@ -23,3 +23,7 @@ docker/api/node_modules/
 # Ignore build output folders
 dist/
 build/
+
+# Environment variable files
+.env
+

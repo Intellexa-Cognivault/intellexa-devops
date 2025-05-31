@@ -26,4 +26,5 @@ build/
 
 # Environment variable files
 .env
-
+.env.*
+.env_copy

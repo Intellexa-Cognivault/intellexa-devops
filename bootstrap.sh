@@ -1,5 +1,11 @@
+
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Load environment variables from .env file
+if [ -f .env ]; then
+  export $(grep -v '^#' .env | xargs)
+fi
 
 # Configuration
 PROJECT_NAME="intellexa"
@@ -26,9 +32,9 @@ services:
       context: ./docker/postgres
     container_name: ${PROJECT_NAME}-postgres
     environment:
-      POSTGRES_USER: intellexa
-      POSTGRES_PASSWORD: intellexa123
-      POSTGRES_DB: intellexa
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       - ./scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh
@@ -41,9 +47,9 @@ services:
     image: timescale/timescaledb:${TIMESCALE_VERSION}
     container_name: ${PROJECT_NAME}-timescale
     environment:
-      POSTGRES_USER: timeseries
-      POSTGRES_PASSWORD: timeseries123
-      POSTGRES_DB: metrics
+      POSTGRES_USER: ${TIMESCALE_USER}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+      POSTGRES_DB: ${TIMESCALE_DB}
     volumes:
       - ./scripts/init-timescale.sh:/docker-entrypoint-initdb.d/init.sh
     networks:
@@ -84,8 +90,8 @@ services:
     image: minio/minio:${MINIO_VERSION}
     container_name: ${PROJECT_NAME}-minio
     environment:
-      MINIO_ROOT_USER: intellexa
-      MINIO_ROOT_PASSWORD: intellexa123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     volumes:
       - ./data/minio:/data
@@ -183,29 +189,32 @@ EOF
 chmod +x ./scripts/*.sh
 
 # Start containers
+echo "🐳 Starting docker containers..."
 docker compose up -d
 
+echo "🚀 All services are starting in the background. Use 'docker ps' to verify."
+
 # Wait for services to initialize
-echo "Waiting for databases to initialize (30 seconds)..."
+echo "⏳ Waiting for databases to initialize (30 seconds)..."
 sleep 30
 
 # Initialize MinIO buckets inside the MinIO container to avoid DNS issues
-docker exec -it ${PROJECT_NAME}-minio mc alias set local http://localhost:9000 intellexa intellexa123
+docker exec -it ${PROJECT_NAME}-minio mc alias set local http://localhost:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}
 docker exec -it ${PROJECT_NAME}-minio mc mb local/intellexa-docs --ignore-existing
 
 # Print connection details
 echo -e "\n\033[1;32m=== Intellexa Local Development Setup ===\033[0m"
 echo "PostgreSQL:"
 echo "  Host: localhost:5432"
-echo "  Database: intellexa"
-echo "  User: intellexa"
-echo "  Password: intellexa123"
+echo "  Database: ${POSTGRES_DB}"
+echo "  User: ${POSTGRES_USER}"
+echo "  Password: ${POSTGRES_PASSWORD}"
 
 echo -e "\nTimescaleDB:"
 echo "  Host: localhost:5433"
-echo "  Database: metrics"
-echo "  User: timeseries"
-echo "  Password: timeseries123"
+echo "  Database: ${TIMESCALE_DB}"
+echo "  User: ${TIMESCALE_USER}"
+echo "  Password: ${TIMESCALE_PASSWORD}"
 
 echo -e "\nWeaviate:"
 echo "  URL: http://localhost:8080"
@@ -217,8 +226,8 @@ echo "  No password"
 
 echo -e "\nMinIO:"
 echo "  Console: http://localhost:9001"
-echo "  Access Key: intellexa"
-echo "  Secret Key: intellexa123"
+echo "  Access Key: ${MINIO_ROOT_USER}"
+echo "  Secret Key: ${MINIO_ROOT_PASSWORD}"
 echo "  Bucket: intellexa-docs"
 
-echo -e "\n\033[1;32mRun 'docker compose down' to stop services\033[0m"
+echo -e "\n\033[1;32mRun '🐳 docker compose down' to stop services\033[0m"

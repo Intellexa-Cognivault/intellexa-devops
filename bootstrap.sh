@@ -1,40 +1,73 @@
-
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Load environment variables from .env file
-if [ -f .env ]; then
-  export $(grep -v '^#' .env | xargs)
-fi
+echo "🔧 Bootstrapping Intellexa DevOps stack..."
 
-# Configuration
-PROJECT_NAME="intellexa"
+# --------------------------------------------------
+# Environment Configuration
+# --------------------------------------------------
+load_env() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Ignore comments and empty lines
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
+      continue
+    fi
+    # Check if line contains a valid KEY=VALUE format
+    if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      export "$line"
+    fi
+  done < .env
+}
+
+if [ -f .env ]; then
+  echo "✅ Using existing .env file"
+else
+  echo "❗ .env file not found. Creating .env file with placeholders..."
+  cat > .env <<EOF
+# Intellexa Core Configuration
+# Replace the placeholder values with your actual configuration
+
+PROJECT_NAME="intellexa DevOps Stack"
 POSTGRES_VERSION="15-alpine"
-POSTGRES_IMAGE="ankane/pgvector:latest"
+TIMESCALE_VERSION="pg15-2.11"
+WEAVIATE_VERSION="1.22"
 REDIS_VERSION="7-alpine"
-TIMESCALE_VERSION="2.11.0-pg15"
-WEAVIATE_VERSION="latest"
 MINIO_VERSION="RELEASE.2023-08-23T10-07-06Z"
 
-# Create Docker network
-docker network create ${PROJECT_NAME}-network || true
+# Database Credentials
+POSTGRES_USER="your_postgres_user_here"
+POSTGRES_PASSWORD="your_postgres_password_here"
+POSTGRES_DB="your_postgres_db_here"
+TIMESCALE_USER="your_timescale_user_here"
+TIMESCALE_PASSWORD="your_timescale_password_here"
+MINIO_ROOT_USER="your_minio_root_user_here"
+MINIO_ROOT_PASSWORD="your_minio_root_password_here"
+EOF
+fi
+
+# Load environment variables
+load_env
+
+# --------------------------------------------------
+# Infrastructure Setup
+# --------------------------------------------------
+echo "🚀 Initializing infrastructure..."
 
 # Create data directories
 mkdir -p ./data/{postgres,minio,weaviate,redis}
 
+# Create Docker network
+docker network create ${PROJECT_NAME}-network 2>/dev/null || true
+
 # Generate Docker Compose file
 cat > docker-compose.yml <<EOF
-version: '3.8'
-
 services:
   postgres:
-    build:
-      context: ./docker/postgres
-    container_name: ${PROJECT_NAME}-postgres
+    image: postgres:\${POSTGRES_VERSION}
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: \${POSTGRES_USER}
+      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD}
+      POSTGRES_DB: \${POSTGRES_DB}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       - ./scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh
@@ -44,12 +77,11 @@ services:
       - "5432:5432"
 
   timescale:
-    image: timescale/timescaledb:${TIMESCALE_VERSION}
-    container_name: ${PROJECT_NAME}-timescale
+    image: timescale/timescaledb:\${TIMESCALE_VERSION}
     environment:
-      POSTGRES_USER: ${TIMESCALE_USER}
-      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
-      POSTGRES_DB: ${TIMESCALE_DB}
+      POSTGRES_USER: \${TIMESCALE_USER}
+      POSTGRES_PASSWORD: \${TIMESCALE_PASSWORD}
+      POSTGRES_DB: metrics
     volumes:
       - ./scripts/init-timescale.sh:/docker-entrypoint-initdb.d/init.sh
     networks:
@@ -58,26 +90,20 @@ services:
       - "5433:5432"
 
   weaviate:
-    image: semitechnologies/weaviate:${WEAVIATE_VERSION}
-    container_name: ${PROJECT_NAME}-weaviate
+    image: semitechnologies/weaviate:\${WEAVIATE_VERSION}
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-      QUERY_DEFAULTS_LIMIT: 25
-      CLUSTER_HOSTNAME: 'node1'
     volumes:
       - ./data/weaviate:/var/lib/weaviate
       - ./scripts/init-weaviate.json:/etc/weaviate/schema.json
     networks:
       - ${PROJECT_NAME}-network
     ports:
-      - "8080:8080"
-    depends_on:
-      - redis
+      - "8082:8080"
 
   redis:
-    image: redis:${REDIS_VERSION}
-    container_name: ${PROJECT_NAME}-redis
+    image: redis:\${REDIS_VERSION}
     command: redis-server --save 60 1 --loglevel warning
     volumes:
       - ./data/redis:/data
@@ -87,147 +113,190 @@ services:
       - "6379:6379"
 
   minio:
-    image: minio/minio:${MINIO_VERSION}
-    container_name: ${PROJECT_NAME}-minio
+    image: minio/minio:\${MINIO_VERSION}
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_ROOT_USER: \${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: \${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     volumes:
       - ./data/minio:/data
     networks:
       - ${PROJECT_NAME}-network
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
 
 networks:
   ${PROJECT_NAME}-network:
     driver: bridge
 EOF
 
-# Create initialization scripts
+# --------------------------------------------------
+# Schema Initialization
+# --------------------------------------------------
+echo "📝 Generating schema initialization scripts..."
+
 mkdir -p ./scripts
 
-# PostgreSQL initialization
-cat > ./scripts/init-postgres.sh <<'EOF'
+# PostgreSQL schema
+cat > ./scripts/init-postgres.sh <<EOF
 #!/bin/bash
 set -e
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+psql -v ON_ERROR_STOP=1 --username "\$POSTGRES_USER" --dbname "\$POSTGRES_DB" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS pgvector;
     CREATE EXTENSION IF NOT EXISTS pg_trgm;
-    CREATE EXTENSION IF NOT EXISTS hstore;
-
-    CREATE TABLE users (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        email TEXT UNIQUE NOT NULL,
-        created_at TIMESTAMPTZ DEFAULT NOW()
-    );
-
-    CREATE TABLE documents (
-        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        user_id UUID REFERENCES users(id),
+    
+    CREATE TABLE IF NOT EXISTS documents (
+        id SERIAL PRIMARY KEY,
         title TEXT NOT NULL,
         content TEXT,
-        embeddings_id TEXT,
-        s3_path TEXT NOT NULL,
-        metadata JSONB,
+        embeddings_vector VECTOR(1536),
         created_at TIMESTAMPTZ DEFAULT NOW()
     );
-
-    CREATE INDEX idx_document_embeddings ON documents USING ivfflat (embeddings_id vector_cosine_ops);
-    CREATE INDEX idx_document_search ON documents USING gin (content gin_trgm_ops);
+    
+    CREATE INDEX idx_document_embeddings ON documents USING ivfflat (embeddings_vector vector_cosine_ops);
 EOSQL
 EOF
 
-# TimescaleDB initialization
-cat > ./scripts/init-timescale.sh <<'EOF'
+# TimescaleDB schema
+cat > ./scripts/init-timescale.sh <<EOF
 #!/bin/bash
 set -e
 
-psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
+psql -v ON_ERROR_STOP=1 --username "\$POSTGRES_USER" --dbname "metrics" <<-EOSQL
     CREATE EXTENSION IF NOT EXISTS timescaledb;
-
-    CREATE TABLE metrics (
+    
+    CREATE TABLE IF NOT EXISTS request_metrics (
         time TIMESTAMPTZ NOT NULL,
-        name TEXT NOT NULL,
-        value DOUBLE PRECISION NOT NULL,
-        labels JSONB
+        endpoint TEXT NOT NULL,
+        duration_ms REAL NOT NULL,
+        status_code INT NOT NULL
     );
-
-    SELECT create_hypertable('metrics', 'time');
-    CREATE INDEX idx_metrics_name_time ON metrics (name, time DESC);
+    
+    SELECT create_hypertable('request_metrics', 'time');
 EOSQL
 EOF
 
 # Weaviate schema
-cat > ./scripts/init-weaviate.json <<'EOF'
+cat > ./scripts/init-weaviate.json <<EOF
 {
   "classes": [{
-    "class": "Document",
+    "class": "DocumentChunk",
     "vectorizer": "none",
     "properties": [
-      {
-        "name": "content",
-        "dataType": ["text"]
-      },
-      {
-        "name": "docId",
-        "dataType": ["string"]
-      },
-      {
-        "name": "userId",
-        "dataType": ["string"]
-      }
+      {"name": "content", "dataType": ["text"]},
+      {"name": "docId", "dataType": ["string"]},
+      {"name": "chunkIndex", "dataType": ["int"]}
     ]
   }]
 }
 EOF
 
-# Set permissions
 chmod +x ./scripts/*.sh
 
-# Start containers
-echo "🐳 Starting docker containers..."
-docker compose up -d
+# --------------------------------------------------
+# Service Startup
+# --------------------------------------------------
+echo "🚦 Starting containers..."
+COMPOSE_PROJECT_NAME=${PROJECT_NAME} docker compose up -d
 
-echo "🚀 All services are starting in the background. Use 'docker ps' to verify."
+# --------------------------------------------------
+# Post-Install Setup
+# --------------------------------------------------
+echo "⏳ Waiting for services to initialize (20 seconds)..."
+sleep 20
 
-# Wait for services to initialize
-echo "⏳ Waiting for databases to initialize (30 seconds)..."
-sleep 30
+echo "📦 Creating MinIO bucket..."
 
-# Initialize MinIO buckets inside the MinIO container to avoid DNS issues
-docker exec -it ${PROJECT_NAME}-minio mc alias set local http://localhost:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD}
-docker exec -it ${PROJECT_NAME}-minio mc mb local/intellexa-docs --ignore-existing
+# Wait for MinIO service to be reachable
+max_retries=20
+retry_count=0
+until docker run --rm --network ${PROJECT_NAME}-network busybox nc -z minio 9000; do
+  retry_count=$((retry_count+1))
+  if [ $retry_count -ge $max_retries ]; then
+    echo "❌ MinIO service not reachable after $max_retries attempts."
+    exit 1
+  fi
+  echo "Waiting for MinIO service to be reachable... ($retry_count/$max_retries)"
+  sleep 5
+done
 
-# Print connection details
-echo -e "\n\033[1;32m=== Intellexa Local Development Setup ===\033[0m"
-echo "PostgreSQL:"
-echo "  Host: localhost:5432"
-echo "  Database: ${POSTGRES_DB}"
-echo "  User: ${POSTGRES_USER}"
-echo "  Password: ${POSTGRES_PASSWORD}"
+docker run --rm --network ${PROJECT_NAME}-network \
+  -e MC_HOST_minio=http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000 \
+  minio/mc:latest \
+  mb minio/intellexa-docs --ignore-existing
 
-echo -e "\nTimescaleDB:"
-echo "  Host: localhost:5433"
-echo "  Database: ${TIMESCALE_DB}"
-echo "  User: ${TIMESCALE_USER}"
-echo "  Password: ${TIMESCALE_PASSWORD}"
+# --------------------------------------------------
+# Verification
+# --------------------------------------------------
+echo "🔍 Verifying services:"
 
-echo -e "\nWeaviate:"
-echo "  URL: http://localhost:8080"
-echo "  No authentication"
+services=(
+  "postgres:5432"
+  "timescale:5432"
+  "weaviate:8080"
+  "redis:6379"
+  "minio:9000"
+)
 
-echo -e "\nRedis:"
-echo "  Host: localhost:6379"
-echo "  No password"
+for service in "${services[@]}"; do
+  if COMPOSE_PROJECT_NAME=${PROJECT_NAME} docker compose exec -T ${service%:*} nc -z localhost ${service#*:}; then
+    echo "  ✅ ${service%:*} is healthy"
+  else
+    echo "  ❌ ${service%:*} failed health check"
+  fi
+done
 
-echo -e "\nMinIO:"
-echo "  Console: http://localhost:9001"
-echo "  Access Key: ${MINIO_ROOT_USER}"
-echo "  Secret Key: ${MINIO_ROOT_PASSWORD}"
-echo "  Bucket: intellexa-docs"
+# --------------------------------------------------
+# Connection Details
+# --------------------------------------------------
+echo -e "\n🔑 \033[1;32mIntellexa DevOps Stack Ready\033[0m"
+echo "-----------------------------------------------"
+echo "PostgreSQL:     postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
+echo "TimescaleDB:    postgres://${TIMESCALE_USER}:${TIMESCALE_PASSWORD}@localhost:5433/metrics"
+echo "Weaviate:       http://localhost:8080/v1"
+echo "Redis:          redis://localhost:6379"
+echo "MinIO Console:  http://localhost:9001 (Access: ${MINIO_ROOT_USER}/${MINIO_ROOT_PASSWORD})"
+echo "MinIO Bucket:   intellexa-docs"
+echo "-----------------------------------------------"
+echo "Run \033[1mdocker compose down\033[0m to stop services"
+echo "Run \033[1m./bootstrap.sh\033[0m to recreate environment"
+echo "-----------------------------------------------"
 
-echo -e "\n\033[1;32mRun '🐳 docker compose down' to stop services\033[0m"
+# --------------------------------------------------
+# Verification
+# --------------------------------------------------
+echo "🔍 Verifying services:"
+
+services=(
+  "postgres:5432"
+  "timescale:5432"
+  "weaviate:8080"
+  "redis:6379"
+  "minio:9000"
+)
+
+for service in "${services[@]}"; do
+  if docker compose exec -T ${service%:*} nc -z localhost ${service#*:}; then
+    echo "  ✅ ${service%:*} is healthy"
+  else
+    echo "  ❌ ${service%:*} failed health check"
+  fi
+done
+
+# --------------------------------------------------
+# Connection Details
+# --------------------------------------------------
+echo -e "\n🔑 \033[1;32mIntellexa DevOps Stack Ready\033[0m"
+echo "-----------------------------------------------"
+echo "PostgreSQL:     postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
+echo "TimescaleDB:    postgres://${TIMESCALE_USER}:${TIMESCALE_PASSWORD}@localhost:5433/metrics"
+echo "Weaviate:       http://localhost:8080/v1"
+echo "Redis:          redis://localhost:6379"
+echo "MinIO Console:  http://localhost:9001 (Access: ${MINIO_ROOT_USER}/${MINIO_ROOT_PASSWORD})"
+echo "MinIO Bucket:   intellexa-docs"
+echo "-----------------------------------------------"
+echo "Run \033[1mdocker compose down\033[0m to stop services"
+echo "Run \033[1m./bootstrap.sh\033[0m to recreate environment"
+echo "-----------------------------------------------"

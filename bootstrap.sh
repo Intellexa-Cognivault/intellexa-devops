@@ -6,17 +6,47 @@ echo "🔧 Bootstrapping Intellexa DevOps stack..."
 # --------------------------------------------------
 # Environment Configuration
 # --------------------------------------------------
+load_env() {
+  while IFS= read -r line || [ -n "$line" ]; do
+    # Ignore comments and empty lines
+    if [[ "$line" =~ ^[[:space:]]*# ]] || [[ -z "$line" ]]; then
+      continue
+    fi
+    # Check if line contains a valid KEY=VALUE format
+    if [[ "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
+      export "$line"
+    fi
+  done < .env
+}
+
 if [ -f .env ]; then
   echo "✅ Using existing .env file"
-  export $(grep -v '^#' .env | xargs)
 else
-  echo "❗ .env file not found."
-  echo "Please create a .env file based on the .env.sample file with your secrets."
-  exit 1
+  echo "❗ .env file not found. Creating .env file with placeholders..."
+  cat > .env <<EOF
+# Intellexa Core Configuration
+# Replace the placeholder values with your actual configuration
+
+PROJECT_NAME="intellexa DevOps Stack"
+POSTGRES_VERSION="15-alpine"
+TIMESCALE_VERSION="pg15-2.11"
+WEAVIATE_VERSION="1.22"
+REDIS_VERSION="7-alpine"
+MINIO_VERSION="RELEASE.2023-08-23T10-07-06Z"
+
+# Database Credentials
+POSTGRES_USER="your_postgres_user_here"
+POSTGRES_PASSWORD="your_postgres_password_here"
+POSTGRES_DB="your_postgres_db_here"
+TIMESCALE_USER="your_timescale_user_here"
+TIMESCALE_PASSWORD="your_timescale_password_here"
+MINIO_ROOT_USER="your_minio_root_user_here"
+MINIO_ROOT_PASSWORD="your_minio_root_password_here"
+EOF
 fi
 
 # Load environment variables
-export $(cat .env | xargs)
+load_env
 
 # --------------------------------------------------
 # Infrastructure Setup
@@ -31,8 +61,6 @@ docker network create ${PROJECT_NAME}-network 2>/dev/null || true
 
 # Generate Docker Compose file
 cat > docker-compose.yml <<EOF
-version: '3.8'
-
 services:
   postgres:
     image: postgres:\${POSTGRES_VERSION}
@@ -72,7 +100,7 @@ services:
     networks:
       - ${PROJECT_NAME}-network
     ports:
-      - "8080:8080"
+      - "8082:8080"
 
   redis:
     image: redis:\${REDIS_VERSION}
@@ -95,8 +123,8 @@ services:
     networks:
       - ${PROJECT_NAME}-network
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
 
 networks:
   ${PROJECT_NAME}-network:
@@ -171,7 +199,7 @@ chmod +x ./scripts/*.sh
 # Service Startup
 # --------------------------------------------------
 echo "🚦 Starting containers..."
-docker compose up -d
+COMPOSE_PROJECT_NAME=${PROJECT_NAME} docker compose up -d
 
 # --------------------------------------------------
 # Post-Install Setup
@@ -180,10 +208,61 @@ echo "⏳ Waiting for services to initialize (20 seconds)..."
 sleep 20
 
 echo "📦 Creating MinIO bucket..."
+
+# Wait for MinIO service to be reachable
+max_retries=20
+retry_count=0
+until docker run --rm --network ${PROJECT_NAME}-network busybox nc -z minio 9000; do
+  retry_count=$((retry_count+1))
+  if [ $retry_count -ge $max_retries ]; then
+    echo "❌ MinIO service not reachable after $max_retries attempts."
+    exit 1
+  fi
+  echo "Waiting for MinIO service to be reachable... ($retry_count/$max_retries)"
+  sleep 5
+done
+
 docker run --rm --network ${PROJECT_NAME}-network \
   -e MC_HOST_minio=http://${MINIO_ROOT_USER}:${MINIO_ROOT_PASSWORD}@minio:9000 \
   minio/mc:latest \
   mb minio/intellexa-docs --ignore-existing
+
+# --------------------------------------------------
+# Verification
+# --------------------------------------------------
+echo "🔍 Verifying services:"
+
+services=(
+  "postgres:5432"
+  "timescale:5432"
+  "weaviate:8080"
+  "redis:6379"
+  "minio:9000"
+)
+
+for service in "${services[@]}"; do
+  if COMPOSE_PROJECT_NAME=${PROJECT_NAME} docker compose exec -T ${service%:*} nc -z localhost ${service#*:}; then
+    echo "  ✅ ${service%:*} is healthy"
+  else
+    echo "  ❌ ${service%:*} failed health check"
+  fi
+done
+
+# --------------------------------------------------
+# Connection Details
+# --------------------------------------------------
+echo -e "\n🔑 \033[1;32mIntellexa DevOps Stack Ready\033[0m"
+echo "-----------------------------------------------"
+echo "PostgreSQL:     postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@localhost:5432/${POSTGRES_DB}"
+echo "TimescaleDB:    postgres://${TIMESCALE_USER}:${TIMESCALE_PASSWORD}@localhost:5433/metrics"
+echo "Weaviate:       http://localhost:8080/v1"
+echo "Redis:          redis://localhost:6379"
+echo "MinIO Console:  http://localhost:9001 (Access: ${MINIO_ROOT_USER}/${MINIO_ROOT_PASSWORD})"
+echo "MinIO Bucket:   intellexa-docs"
+echo "-----------------------------------------------"
+echo "Run \033[1mdocker compose down\033[0m to stop services"
+echo "Run \033[1m./bootstrap.sh\033[0m to recreate environment"
+echo "-----------------------------------------------"
 
 # --------------------------------------------------
 # Verification

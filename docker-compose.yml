@@ -1,14 +1,10 @@
-version: '3.8'
-
 services:
   postgres:
-    build:
-      context: ./docker/postgres
-    container_name: intellexa-postgres
+    image: postgres:${POSTGRES_VERSION}
     environment:
-      POSTGRES_USER: intellexa
-      POSTGRES_PASSWORD: intellexa123
-      POSTGRES_DB: intellexa
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
       - ./scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh
@@ -18,11 +14,10 @@ services:
       - "5432:5432"
 
   timescale:
-    image: timescale/timescaledb:2.11.0-pg15
-    container_name: intellexa-timescale
+    image: timescale/timescaledb:${TIMESCALE_VERSION}
     environment:
-      POSTGRES_USER: timeseries
-      POSTGRES_PASSWORD: timeseries123
+      POSTGRES_USER: ${TIMESCALE_USER}
+      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
       POSTGRES_DB: metrics
     volumes:
       - ./scripts/init-timescale.sh:/docker-entrypoint-initdb.d/init.sh
@@ -32,26 +27,20 @@ services:
       - "5433:5432"
 
   weaviate:
-    image: semitechnologies/weaviate:latest
-    container_name: intellexa-weaviate
+    image: semitechnologies/weaviate:${WEAVIATE_VERSION}
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
-      QUERY_DEFAULTS_LIMIT: 25
-      CLUSTER_HOSTNAME: 'node1'
     volumes:
       - ./data/weaviate:/var/lib/weaviate
       - ./scripts/init-weaviate.json:/etc/weaviate/schema.json
     networks:
       - intellexa-network
     ports:
-      - "8080:8080"
-    depends_on:
-      - redis
+      - "8082:8080"
 
   redis:
-    image: redis:7-alpine
-    container_name: intellexa-redis
+    image: redis:${REDIS_VERSION}
     command: redis-server --save 60 1 --loglevel warning
     volumes:
       - ./data/redis:/data
@@ -61,19 +50,18 @@ services:
       - "6379:6379"
 
   minio:
-    image: minio/minio:RELEASE.2023-08-23T10-07-06Z
-    container_name: intellexa-minio
+    image: minio/minio:${MINIO_VERSION}
     environment:
-      MINIO_ROOT_USER: intellexa
-      MINIO_ROOT_PASSWORD: intellexa123
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     command: server /data --console-address ":9001"
     volumes:
       - ./data/minio:/data
     networks:
       - intellexa-network
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "9002:9000"
+      - "9003:9001"
 
 networks:
   intellexa-network:

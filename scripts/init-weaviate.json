@@ -1,20 +1,11 @@
 {
   "classes": [{
-    "class": "Document",
+    "class": "DocumentChunk",
     "vectorizer": "none",
     "properties": [
-      {
-        "name": "content",
-        "dataType": ["text"]
-      },
-      {
-        "name": "docId",
-        "dataType": ["string"]
-      },
-      {
-        "name": "userId",
-        "dataType": ["string"]
-      }
+      {"name": "content", "dataType": ["text"]},
+      {"name": "docId", "dataType": ["string"]},
+      {"name": "chunkIndex", "dataType": ["int"]}
     ]
   }]
 }

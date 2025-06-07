@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   postgres:
     build:
@@ -20,6 +22,11 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   timescale:
     image: timescale/timescaledb:2.11.0-pg15
@@ -34,6 +41,11 @@ services:
       - intellexa-network
     ports:
       - "5433:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
   weaviate:
     image: semitechnologies/weaviate:1.23.6
@@ -54,6 +66,11 @@ services:
       - "8081:8080"
     depends_on:
       - redis
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
 
   redis:
     image: redis:7-alpine
@@ -65,6 +82,11 @@ services:
       - intellexa-network
     ports:
       - "6379:6379"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
 
   minio:
     image: minio/minio:latest
@@ -80,6 +102,11 @@ services:
     ports:
       - "9000:9000"
       - "9001:9001"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
 
 networks:
   intellexa-network:

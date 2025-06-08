@@ -1,0 +1,14 @@
+# docker-compose.light.yml
+services:
+  postgres:
+    image: postgres:15-alpine
+    command: postgres -c shared_buffers=32MB
+
+  qdrant:  # Alternative to Weaviate (uses ~100MB)
+    image: qdrant/qdrant:v1.3.0
+    ports:
+      - "6333:6333"
+    deploy:
+      resources:
+        limits:
+          memory: 200M

@@ -1,6 +1,7 @@
 services:
   postgres:
-    image: postgres:15-alpine
+    build:
+      context: ./docker/postgres
     container_name: intellexa-postgres
     environment:
       POSTGRES_USER: intellexa
@@ -62,7 +63,7 @@ services:
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       QUERY_DEFAULTS_LIMIT: 25
       CLUSTER_HOSTNAME: 'node1'
-      ENABLE_MODULES: "text2vec-transformers"  # Only enable needed modules
+      ENABLE_MODULES: ""  # Disabled transformer module to avoid missing service error
       DEFAULT_VECTORIZER_MODULE: "none"
       TRANSFORMERS_INFERENCE_API: "http://transformers:8080"  # If using
       DISABLE_TELEMETRY: "true"  # Reduce overhead
@@ -93,7 +94,7 @@ services:
       redis-server 
       --save "" 
       --appendonly no 
-      --maxmemory 96mb  # Explicit memory limit
+      --maxmemory 96mb
       --maxmemory-policy allkeys-lru
     volumes:
       - redis-data:/data

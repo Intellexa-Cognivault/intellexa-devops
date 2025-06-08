@@ -1,23 +1,41 @@
 services:
   postgres:
-    image: postgres:${POSTGRES_VERSION}
+    image: postgres:15-alpine
+    container_name: intellexa-postgres
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: intellexa
+      POSTGRES_PASSWORD: intellexa123
+      POSTGRES_DB: intellexa
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF-8"  # Optimized encoding
     volumes:
-      - ./data/postgres:/var/lib/postgresql/data
+      - postgres-data:/var/lib/postgresql/data
       - ./scripts/init-postgres.sh:/docker-entrypoint-initdb.d/init.sh
     networks:
       - intellexa-network
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]  # More specific check
+      interval: 10s  # Reduced frequency
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 384M  # Reduced from 512M
+          cpus: '0.5'
+    command: >  # Optimized PostgreSQL config
+      postgres 
+      -c shared_buffers=64MB 
+      -c work_mem=4MB 
+      -c maintenance_work_mem=32MB
 
   timescale:
-    image: timescale/timescaledb:${TIMESCALE_VERSION}
+    image: timescale/timescaledb:latest-pg15  # Use latest patch version
+    container_name: intellexa-timescale
     environment:
-      POSTGRES_USER: ${TIMESCALE_USER}
-      POSTGRES_PASSWORD: ${TIMESCALE_PASSWORD}
+      POSTGRES_USER: timeseries
+      POSTGRES_PASSWORD: timeseries123
       POSTGRES_DB: metrics
     volumes:
       - ./scripts/init-timescale.sh:/docker-entrypoint-initdb.d/init.sh
@@ -25,44 +43,114 @@ services:
       - intellexa-network
     ports:
       - "5433:5432"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 384M  # Reduced from 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   weaviate:
-    image: semitechnologies/weaviate:${WEAVIATE_VERSION}
+    image: semitechnologies/weaviate:1.23.6
+    container_name: intellexa-weaviate
     environment:
       AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      QUERY_DEFAULTS_LIMIT: 25
+      CLUSTER_HOSTNAME: 'node1'
+      ENABLE_MODULES: "text2vec-transformers"  # Only enable needed modules
+      DEFAULT_VECTORIZER_MODULE: "none"
+      TRANSFORMERS_INFERENCE_API: "http://transformers:8080"  # If using
+      DISABLE_TELEMETRY: "true"  # Reduce overhead
     volumes:
-      - ./data/weaviate:/var/lib/weaviate
+      - weaviate-data:/var/lib/weaviate
       - ./scripts/init-weaviate.json:/etc/weaviate/schema.json
     networks:
       - intellexa-network
     ports:
-      - "8082:8080"
+      - "8081:8080"
+    depends_on:
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 768M  # Balanced reduction from 1G
+          cpus: '1.0'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/.well-known/ready"]
+      interval: 30s  # Weaviate starts slower
+      timeout: 10s
+      retries: 5
 
   redis:
-    image: redis:${REDIS_VERSION}
-    command: redis-server --save 60 1 --loglevel warning
+    image: redis:7-alpine
+    container_name: intellexa-redis
+    command: >  # Optimized Redis config
+      redis-server 
+      --save "" 
+      --appendonly no 
+      --maxmemory 96mb  # Explicit memory limit
+      --maxmemory-policy allkeys-lru
     volumes:
-      - ./data/redis:/data
+      - redis-data:/data
     networks:
       - intellexa-network
     ports:
       - "6379:6379"
+    deploy:
+      resources:
+        limits:
+          memory: 96M  # Reduced from 128M
+          cpus: '0.3'
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   minio:
-    image: minio/minio:${MINIO_VERSION}
+    image: minio/minio:RELEASE.2023-08-23T10-07-06Z  # Pinned stable version
+    container_name: intellexa-minio
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server /data --console-address ":9001"
+      MINIO_ROOT_USER: intellexa
+      MINIO_ROOT_PASSWORD: intellexa123
+      MINIO_DOMAIN: storage.intellexa.local  # For virtual-host style access
+    command: server /data --console-address ":9001" --quiet  # Reduced logging
     volumes:
-      - ./data/minio:/data
+      - minio-data:/data
     networks:
       - intellexa-network
     ports:
-      - "9002:9000"
-      - "9003:9001"
+      - "9000:9000"
+      - "9001:9001"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M  # Reduced from 512M
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 networks:
   intellexa-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16  # Fixed subnet for stability
+
+volumes:
+  postgres-data:
+    driver_opts:
+      type: tmpfs  # For dev environment only
+      device: tmpfs
+      o: size=1G
+  weaviate-data:
+  redis-data:
+  minio-data:

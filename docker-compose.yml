@@ -1,8 +1,6 @@
 services:
   postgres:
-    build:
-      context: ./docker/postgres
-    image: intellexa-devops-postgres:latest
+    image: postgres:15-alpine
     container_name: intellexa-postgres
     environment:
       POSTGRES_USER: intellexa
@@ -23,7 +21,6 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
           memory: 512M
 
   timescale:
@@ -53,8 +50,8 @@ services:
       PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
       QUERY_DEFAULTS_LIMIT: 25
       CLUSTER_HOSTNAME: 'node1'
-      ENABLE_MODULES: "text2vec-openai"
-      DEFAULT_VECTORIZER_MODULE: "text2vec-openai"
+      ENABLE_MODULES: ""
+      DEFAULT_VECTORIZER_MODULE: "none"
     volumes:
       - weaviate-data:/var/lib/weaviate
       - ./scripts/init-weaviate.json:/etc/weaviate/schema.json
@@ -67,13 +64,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 1024M
+          memory: 1G
 
   redis:
     image: redis:7-alpine
     container_name: intellexa-redis
-    command: redis-server --save 60 1 --loglevel warning
+    command: redis-server --save "" --appendonly no
     volumes:
       - redis-data:/data
     networks:
@@ -83,8 +79,7 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.25'
-          memory: 256M
+          memory: 128M
 
   minio:
     image: minio/minio:latest
